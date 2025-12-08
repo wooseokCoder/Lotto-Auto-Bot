@@ -1,0 +1,55 @@
+name: Lotto Auto Bot
+
+on:
+  schedule:
+    # UTC 기준 03:00는 한국 시간 12:00입니다.
+    # 토요일(6), 일요일(0) 12시에 실행
+    - cron: '0 3 * * 6,0'
+  workflow_dispatch: # 수동 실행 버튼 추가
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 저장소 코드 가져오기
+      uses: actions/checkout@v3
+
+    - name: 파이썬 설치
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 라이브러리 설치
+      run: |
+        pip install requests gspread oauth2client
+
+    - name: 구글 인증키 파일 생성
+      # 비밀 금고에 넣어둔 내용을 꺼내서 lotto_key.json 파일로 만듦
+      run: |
+        echo '${{ secrets.GOOGLE_JSON_KEY }}' > lotto_key.json
+
+    - name: (토요일) 번호 생성 실행
+      if: github.event.schedule == '0 3 * * 6' || github.event_name == 'workflow_dispatch'
+      run: |
+        # 토요일이면 생성 모드 실행
+        python file2_lotto_service.py --mode gen
+
+    - name: (일요일) 당첨 확인 및 업데이트
+      if: github.event.schedule == '0 3 * * 0'
+      run: |
+        # 일요일이면 업데이트 후 확인 모드 실행
+        python file1_history_manager.py
+        python file2_lotto_service.py --mode check
+
+    - name: 결과 파일 저장 (Commit & Push)
+      run: |
+        git config --global user.name "lotto-bot"
+        git config --global user.email "bot@noreply.github.com"
+        git add *.json *.csv
+        # 변경사항이 있을 때만 커밋 (에러 방지)
+        git commit -m "Update lotto data" || echo "No changes to commit"
+        git push
