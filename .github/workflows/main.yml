@@ -50,12 +50,17 @@ jobs:
         git config --global user.name "lotto-bot"
         git config --global user.email "bot@noreply.github.com"
         
-        # [핵심] 깃허브에 올리기 전에 비밀키 파일은 삭제합니다! (보안 에러 해결)
+        # 1. 보안을 위해 키 파일 먼저 삭제 (로그에 남지 않게)
         rm lotto_key.json
         
-        # 나머지 파일들만 추가
+        # 2. 파일 담기
         git add *.json *.csv
         
-        # 변경사항이 있을 때만 커밋
+        # 3. 커밋 (로컬 저장)
         git commit -m "Update lotto data" || echo "No changes to commit"
+        
+        # 4. [핵심] 서버의 최신 변경사항을 가져와서 합치기 (이게 빠져서 에러난 것임)
+        git pull --rebase origin main
+        
+        # 5. 최종 업로드
         git push
