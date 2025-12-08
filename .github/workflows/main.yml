@@ -49,7 +49,13 @@ jobs:
       run: |
         git config --global user.name "lotto-bot"
         git config --global user.email "bot@noreply.github.com"
+        
+        # [핵심] 깃허브에 올리기 전에 비밀키 파일은 삭제합니다! (보안 에러 해결)
+        rm lotto_key.json
+        
+        # 나머지 파일들만 추가
         git add *.json *.csv
-        # 변경사항이 있을 때만 커밋 (에러 방지)
+        
+        # 변경사항이 있을 때만 커밋
         git commit -m "Update lotto data" || echo "No changes to commit"
         git push
