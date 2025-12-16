@@ -3,8 +3,8 @@ name: Lotto Auto Bot
 on:
   schedule:
     # UTC 기준 03:00는 한국 시간 12:00입니다.
-    # 토요일(6), 일요일(0) 12시에 실행
-    - cron: '0 3 * * 6,0'
+    # 월요일(1), 일요일(0) 12시에 실행
+    - cron: '0 3 * * 1,0'
   workflow_dispatch: # 수동 실행 버튼 추가
 
 permissions:
@@ -33,13 +33,13 @@ jobs:
         echo '${{ secrets.GOOGLE_JSON_KEY }}' > lotto_key.json
 
     - name: (토요일) 번호 생성 실행
-      if: github.event.schedule == '0 3 * * 6' || github.event_name == 'workflow_dispatch'
+      if: github.event.schedule == '* 3 * * 1' || github.event_name == 'workflow_dispatch'
       run: |
         # 토요일이면 생성 모드 실행
         python file2_lotto_service.py --mode gen
 
     - name: (일요일) 당첨 확인 및 업데이트
-      if: github.event.schedule == '0 3 * * 0'
+      if: github.event.schedule == '* 3 * * 0'
       run: |
         # 일요일이면 업데이트 후 확인 모드 실행
         python file1_history_manager.py
