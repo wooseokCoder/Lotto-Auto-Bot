@@ -64,7 +64,7 @@ class LottoEngine:
         
         return True
 
-    def generate_numbers(self, count=10):
+    def generate_numbers(self, count=15):
         results = []
         target_drw_no = (self.latest_draw['drwNo'] + 1) if self.latest_draw else 1
         
@@ -230,6 +230,6 @@ if __name__ == "__main__":
         mode = 'gen' if sel in ['1', 'gen'] else 'check'
 
     if mode == 'gen':
-        engine.generate_numbers(10)
+        engine.generate_numbers(15)
     elif mode == 'check':
         engine.check_my_rank()
