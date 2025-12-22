@@ -14,10 +14,27 @@ jobs:
     steps : 
       - name : log 테스트
         run : | 
-          echo "schedule start ================="
+          echo "Test Area Start ================="
           echo github.event.schedule
-          echo ${ github.event.schedule }
-          echo "schedule end ================="
+          echo ${{ github.event.schedule }}
+          if github.event.schedule == '* * * * 0'; then
+            echo "sun"
+          elif github.event.schedule == '* * * * 1'; then
+            echo "mon"
+          elif github.event.schedule == '* * * * 2'; then
+            echo "tue"
+          elif github.event.schedule == '* * * * 3'; then
+            echo "wed"
+           elif github.event.schedule == '* * * * 4'; then
+            echo "thu"
+           elif github.event.schedule == '* * * * 5'; then
+            echo "fri"
+           elif github.event.schedule == '* * * * 6'; then
+            echo "sat"
+          else
+            echo "fail"
+          fi
+          echo "Test Area End ================="
           
 
     # steps:
