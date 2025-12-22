@@ -11,7 +11,9 @@ on:
         description: '로그에 남길 메시지를 입력하세요'
         required: false
         default: '테스트 실행 중입니다...'
-
+permissions:
+  contents: write
+  
 jobs:
   test_job :
     runs-on: ubuntu-latest
