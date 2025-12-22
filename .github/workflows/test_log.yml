@@ -23,21 +23,22 @@ jobs:
         run : echo "sun"
       - name : 월요일
         if : github.event.schedule == '* * * * 1'
-        run : echo "sun"
+        run : echo "mon"
       - name : 화요일
         if : github.event.schedule == '* * * * 2'
-        run : echo "sun"
+        run : echo "tue"
       - name : 수요일
         if : github.event.schedule == '* * * * 3'
-        run : echo "sun"
+        run : echo "wed"
       - name : 목요일
         if : github.event.schedule == '* * * * 4'
-        run : echo "sun"
+        run : echo "thu"
       - name : 금요일
         if : github.event.schedule == '* * * * 5'
-        run : echo "sun"
-      - name : 통요일
-        if : github.event.schedule == '* * * * 6'          
+        run : echo "fri"
+      - name : 토요일
+        if : github.event.schedule == '* * * * 6'
+        run : echo "sat"
 
     # steps:
     # # 1. 환경 설정
