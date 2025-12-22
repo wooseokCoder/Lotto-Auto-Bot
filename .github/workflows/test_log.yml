@@ -4,7 +4,7 @@ on:
   schedule:
     # UTC 기준 03:00는 한국 시간 12:00입니다.
     # 월요일(1), 일요일(0) 12시에 실행
-    - cron: '*/2 * * * *'
+    - cron: '* */6 * * *'
     
 permissions:
   contents: write
@@ -35,7 +35,7 @@ jobs:
         if : github.event.schedule == '* * * * 6'
         run : echo "sat"
       - name : 실패시
-        run : echo ${ { github.event.schedule } }
+        run : echo '${ { github.event.schedule } }'
 
     # steps:
     # # 1. 환경 설정
