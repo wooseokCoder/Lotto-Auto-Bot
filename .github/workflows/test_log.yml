@@ -24,19 +24,19 @@ jobs:
           echo github.event.schedule
           # ${{ }} 를 쓰면 깃허브가 먼저 값을 채워넣고 실행합니다.
           SCHEDULE_VAL="${{ github.event.schedule }}"
-          if SCHEDULE_VAL == '* * * * 0'; then
+          if [ "$SCHEDULE_VAL" == '* * * * 0']; then
             echo "sun"
-          elif SCHEDULE_VAL == '* * * * 1'; then
+          elif [ "$SCHEDULE_VAL" == '* * * * 1']; then
             echo "mon"
-          elif SCHEDULE_VAL == '* * * * 2'; then
+          elif [ "$SCHEDULE_VAL" == '* * * * 2']; then
             echo "tue"
-          elif SCHEDULE_VAL == '* * * * 3'; then
+          elif [ "$SCHEDULE_VAL" == '* * * * 3']; then
             echo "wed"
-           elif SCHEDULE_VAL == '* * * * 4'; then
+           elif [ "$SCHEDULE_VAL" == '* * * * 4']; then
             echo "thu"
-           elif SCHEDULE_VAL == '* * * * 5'; then
+           elif [ "$SCHEDULE_VAL" == '* * * * 5']; then
             echo "fri"
-           elif SCHEDULE_VAL == '* * * * 6'; then
+           elif [ "$SCHEDULE_VAL" == '* * * * 6']; then
             echo "sat"
           else
             echo "fail"
