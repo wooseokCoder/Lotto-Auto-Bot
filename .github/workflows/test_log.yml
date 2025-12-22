@@ -13,7 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps : 
       - name : log 테스트
-        run : echo github.event.schedule
+        run : | 
+          echo "schedule start ================="
+          echo github.event.schedule
+          echo "schedule end ================="
           
 
     # steps:
