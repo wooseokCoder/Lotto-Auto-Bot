@@ -1,0 +1,66 @@
+name: 🧪 실험실 (Playground)
+
+on:
+  workflow_dispatch: # 버튼 눌러서 수동 실행 (필수!)
+    inputs:
+      log_message:
+        description: '로그에 남길 메시지를 입력하세요'
+        required: false
+        default: '테스트 실행 중입니다...'
+
+jobs:
+  test-job:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. 환경 설정
+    - name: 체크아웃
+      uses: actions/checkout@v3
+
+    # 2. 파이썬으로 로그 파일 만들기 (실험용)
+    - name: 파이썬 로그 생성 테스트
+      run: |
+        # 파이썬 코드를 즉석에서 만들어서 실행합니다.
+        cat <<EOF > test_script.py
+        import datetime
+        import sys
+
+        # 입력받은 메시지
+        msg = "${{ inputs.log_message }}"
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        log_content = f"[{now}] 로그 시작\n"
+        log_content += f"[{now}] 입력 메시지: {msg}\n"
+        log_content += f"[{now}] 계산 테스트: 1+1={1+1}\n"
+        log_content += f"[{now}] 로그 종료"
+
+        # 1) 화면(Console)에 출력 (방법 A)
+        print("--- 콘솔 출력 시작 ---")
+        print(log_content)
+        print("--- 콘솔 출력 끝 ---")
+
+        # 2) 파일(log.txt)에 저장 (방법 B)
+        with open("execution.log", "w", encoding="utf-8") as f:
+            f.write(log_content)
+        
+        # 3) 깃허브 요약(Summary)에 출력 (방법 C - 마크다운 지원)
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
+             f.write("## 🚀 테스트 실행 리포트\n")
+             f.write(f"- **시간**: {now}\n")
+             f.write(f"- **메시지**: {msg}\n")
+             f.write("> 테스트가 성공적으로 완료되었습니다!")
+        EOF
+        
+        # 위에서 만든 파이썬 파일 실행
+        python test_script.py
+
+    # 3. 로그 파일 업로드 (가장 중요한 부분!)
+    # 파일을 깃허브 저장소에 Push하는 게 아니라, '다운로드' 할 수 있게 올려줍니다.
+    # 에러가 나도 로그는 남아야 하므로 'always()' 조건을 답니다.
+    - name: 로그 파일 다운로드용으로 업로드
+      if: always() 
+      uses: actions/upload-artifact@v4
+      with:
+        name: my-test-logs # 다운로드될 파일 이름
+        path: execution.log # 위에서 만든 파일명
+        retention-days: 1   # 1일 뒤 자동 삭제 (용량 절약)
