@@ -22,20 +22,21 @@ jobs:
         run : | 
           echo "Test Area Start ================="
           echo github.event.schedule
-          echo ${{ github.event.schedule }}
-          if github.event.schedule == '* * * * 0'; then
+          # ${{ }} 를 쓰면 깃허브가 먼저 값을 채워넣고 실행합니다.
+          SCHEDULE_VAL="${{ github.event.schedule }}"
+          if SCHEDULE_VAL == '* * * * 0'; then
             echo "sun"
-          elif github.event.schedule == '* * * * 1'; then
+          elif SCHEDULE_VAL == '* * * * 1'; then
             echo "mon"
-          elif github.event.schedule == '* * * * 2'; then
+          elif SCHEDULE_VAL == '* * * * 2'; then
             echo "tue"
-          elif github.event.schedule == '* * * * 3'; then
+          elif SCHEDULE_VAL == '* * * * 3'; then
             echo "wed"
-           elif github.event.schedule == '* * * * 4'; then
+           elif SCHEDULE_VAL == '* * * * 4'; then
             echo "thu"
-           elif github.event.schedule == '* * * * 5'; then
+           elif SCHEDULE_VAL == '* * * * 5'; then
             echo "fri"
-           elif github.event.schedule == '* * * * 6'; then
+           elif SCHEDULE_VAL == '* * * * 6'; then
             echo "sat"
           else
             echo "fail"
