@@ -16,7 +16,7 @@ jobs:
         run : | 
           echo "schedule start ================="
           echo github.event.schedule
-          echo ${{ github.event.schedule }}
+          echo ${ github.event.schedule }
           echo "schedule end ================="
           
 
