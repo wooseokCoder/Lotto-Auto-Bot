@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps : 
       - name : log 테스트
-        run : |
-          print("log 테스트")
+        run : echo github.event.schedule
+          
 
     # steps:
     # # 1. 환경 설정
