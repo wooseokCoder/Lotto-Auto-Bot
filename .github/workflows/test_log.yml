@@ -5,12 +5,7 @@ on:
     # UTC 기준 03:00는 한국 시간 12:00입니다.
     # 월요일(1), 일요일(0) 12시에 실행
     - cron: '*/2 * * * *'
-  workflow_dispatch: # 버튼 눌러서 수동 실행 (필수!)
-    inputs:
-      log_message:
-        description: '로그에 남길 메시지를 입력하세요'
-        required: false
-        default: '테스트 실행 중입니다...'
+    
 permissions:
   contents: write
   
