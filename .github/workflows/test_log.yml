@@ -18,31 +18,26 @@ jobs:
   test_job :
     runs-on: ubuntu-latest
     steps : 
-      - name : log 테스트
-        run : | 
-          echo "Test Area Start ================="
-          echo github.event.schedule
-          # ${{ }} 를 쓰면 깃허브가 먼저 값을 채워넣고 실행합니다.
-          SCHEDULE_VAL="${{ github.event.schedule }}"
-          if [ "$SCHEDULE_VAL" == '* * * * 0' ]; then
-            echo "sun"
-          elif [ "$SCHEDULE_VAL" == '* * * * 1' ]; then
-            echo "mon"
-          elif [ "$SCHEDULE_VAL" == '* * * * 2' ]; then
-            echo "tue"
-          elif [ "$SCHEDULE_VAL" == '* * * * 3' ]; then
-            echo "wed"
-           elif [ "$SCHEDULE_VAL" == '* * * * 4' ]; then
-            echo "thu"
-           elif [ "$SCHEDULE_VAL" == '* * * * 5' ]; then
-            echo "fri"
-           elif [ "$SCHEDULE_VAL" == '* * * * 6' ]; then
-            echo "sat"
-          else
-            echo "fail"
-          fi
-          echo "Test Area End ================="
-          
+      - name : 일요일
+        if : github.event.schedule == '* * * * 0'
+        run : echo "sun"
+      - name : 월요일
+        if : github.event.schedule == '* * * * 1'
+        run : echo "sun"
+      - name : 화요일
+        if : github.event.schedule == '* * * * 2'
+        run : echo "sun"
+      - name : 수요일
+        if : github.event.schedule == '* * * * 3'
+        run : echo "sun"
+      - name : 목요일
+        if : github.event.schedule == '* * * * 4'
+        run : echo "sun"
+      - name : 금요일
+        if : github.event.schedule == '* * * * 5'
+        run : echo "sun"
+      - name : 통요일
+        if : github.event.schedule == '* * * * 6'          
 
     # steps:
     # # 1. 환경 설정
