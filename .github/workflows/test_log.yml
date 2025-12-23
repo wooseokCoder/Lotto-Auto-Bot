@@ -1,10 +1,12 @@
 name: 실험실 (test-log)
 
 on:
-  schedule:
-    # UTC 기준 03:00는 한국 시간 12:00입니다.
-    # 월요일(1), 일요일(0) 12시에 실행
-    - cron: '0,30 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_msg:
+        description: '테스트할 메시지를 입력해보세요'
+        required: false
+        default: 'Hello Lotto!'
     
 permissions:
   contents: write
@@ -13,6 +15,12 @@ jobs:
   test_job :
     runs-on: ubuntu-latest
     steps : 
+        # 결과값: 1(월) ~ 6(토) ~ 7(일)
+      - name: 요일 확인 (한국시간 기준)
+        run: |
+            # TZ='Asia/Seoul'을 붙여야 한국 시간이 나옵니다.
+            # date +%u 는 요일을 숫자로 출력합니다 (1=월, 6=토, 7=일)
+            echo "DAY_OF_WEEK=$(TZ='Asia/Seoul' date +%u)" >> $GITHUB_ENV
       - name : 일요일
         if : github.event.schedule == '* * * * 0'
         run : echo "sun"
@@ -35,7 +43,7 @@ jobs:
         if : github.event.schedule == '* * * * 6'
         run : echo "sat"
       - name : 실패시
-        run : echo "${{ github.event.schedule }}"
+        run : echo env.DAY_OF_WEEK
 
     # steps:
     # # 1. 환경 설정
