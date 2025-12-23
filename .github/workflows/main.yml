@@ -27,19 +27,26 @@ jobs:
       run: |
         pip install requests gspread oauth2client
 
+    # 결과값: 1(월) ~ 6(토) ~ 7(일)
+    - name: 요일 확인 (한국시간 기준)
+      run: |
+        # TZ='Asia/Seoul'을 붙여야 한국 시간이 나옵니다.
+        # date +%u 는 요일을 숫자로 출력합니다 (1=월, 6=토, 7=일)
+        echo "DAY_OF_WEEK=$(TZ='Asia/Seoul' date +%u)" >> $GITHUB_ENV
+
     - name: 구글 인증키 파일 생성
       # 비밀 금고에 넣어둔 내용을 꺼내서 lotto_key.json 파일로 만듦
       run: |
         echo '${{ secrets.GOOGLE_JSON_KEY }}' > lotto_key.json
 
     - name: (토요일) 번호 생성 실행
-      if: github.event.schedule == '* 3 * * 1' || github.event_name == 'workflow_dispatch'
+      if: env.DAY_OF_WEEK == '1' || github.event_name == 'workflow_dispatch'
       run: |
         # 토요일이면 생성 모드 실행
         python file2_lotto_service.py --mode gen
 
     - name: (일요일) 당첨 확인 및 업데이트
-      if: github.event.schedule == '* 3 * * 0'
+      if: env.DAY_OF_WEEK == '7'
       run: |
         # 일요일이면 업데이트 후 확인 모드 실행
         python file1_history_manager.py
