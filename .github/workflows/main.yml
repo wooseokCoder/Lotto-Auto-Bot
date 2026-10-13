@@ -39,10 +39,10 @@ jobs:
       run: |
         echo '${{ secrets.GOOGLE_JSON_KEY }}' > lotto_key.json
 
-    - name: (토요일) 번호 생성 실행
-      if: env.DAY_OF_WEEK == '1' || github.event_name == 'workflow_dispatch'
+    - name: (월요일 또는 일요일 제외 수동실행) 번호 생성 실행
+      if: env.DAY_OF_WEEK != '7'
       run: |
-        # 토요일이면 생성 모드 실행
+        # 일요일이 아닌 요일(월요일 스케줄 또는 평일 수동 실행)에 번호 생성 실행
         python file2_lotto_service.py --mode gen
 
     - name: (일요일) 당첨 확인 및 업데이트
