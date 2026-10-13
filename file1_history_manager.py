@@ -1,22 +1,27 @@
 import requests
 import csv
 import os
+import re
 import concurrent.futures
 import time
+from bs4 import BeautifulSoup
 
 # --- 경로 설정 ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_FILE = os.path.join(SCRIPT_DIR, 'lotto_history.csv')
 BASE_URL = "https://www.dhlottery.co.kr/common.do?method=getLottoNumber"
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
 
 def get_last_drw_no():
     if not os.path.exists(CSV_FILE):
         return 0
-    
+
     with open(CSV_FILE, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        rows = list(reader)
-        if not rows or len(rows) <= 1: 
+        rows = [r for r in reader if r]
+        if not rows or len(rows) <= 1:
             return 0
         try:
             return int(rows[-1][0])
@@ -24,75 +29,92 @@ def get_last_drw_no():
             return 0
 
 def fetch_one_round(drw_no):
-    """한 회차의 정보를 가져오는 함수 (병렬 처리를 위해 분리)"""
+    """한 회차의 정보를 가져오는 함수 (동행복권 API 우선, 실패시 네이버 검색 폴백)"""
+    # 1. 동행복권 API 시도
     try:
-        resp = requests.get(f"{BASE_URL}&drwNo={drw_no}", timeout=5)
+        resp = requests.get(f"{BASE_URL}&drwNo={drw_no}", headers=HEADERS, timeout=3)
         data = resp.json()
-        
-        if data["returnValue"] == "fail":
-            return None
-        
-        return [
-            data["drwNo"],
-            data["drwtNo1"], data["drwtNo2"], data["drwtNo3"],
-            data["drwtNo4"], data["drwtNo5"], data["drwtNo6"],
-            data["bnusNo"]
-        ]
+        if data.get("returnValue") == "success":
+            return [
+                data["drwNo"],
+                data["drwtNo1"], data["drwtNo2"], data["drwtNo3"],
+                data["drwtNo4"], data["drwtNo5"], data["drwtNo6"],
+                data["bnusNo"]
+            ]
+    except Exception:
+        pass
+
+    # 2. 네이버 검색 폴백
+    try:
+        url = f"https://search.naver.com/search.naver?query={drw_no}회로또당첨번호"
+        resp = requests.get(url, headers=HEADERS, timeout=5)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        spans = soup.find_all('span', class_=re.compile(r'ball|num'))
+        nums = [int(s.text.strip()) for s in spans if s.text.strip().isdigit()]
+        if len(nums) >= 7 and len(set(nums[:6])) == 6:
+            return [drw_no] + nums[:7]
     except Exception as e:
         print(f"[{drw_no}회] 통신 실패: {e}")
-        return None
+    return None
 
 def get_latest_official_round():
     """현재 기준 가장 최신 회차 번호를 추정"""
-    # 1100회부터 시작해서 미래의 회차를 찔러보며 최신 회차 찾기
-    # 너무 오래 걸리지 않게 대략적인 최근 회차(예: 1150) 근처에서 탐색
-    start_guess = 1150
-    while True:
-        resp = requests.get(f"{BASE_URL}&drwNo={start_guess}")
-        if resp.json()["returnValue"] == "fail":
-            return start_guess - 1
-        start_guess += 1
+    try:
+        url = "https://search.naver.com/search.naver?query=로또당첨번호"
+        resp = requests.get(url, headers=HEADERS, timeout=5)
+        matches = [int(m) for m in re.findall(r'(\d+)회', resp.text) if 1000 <= int(m) <= 2500]
+        if matches:
+            candidate = max(matches)
+            # 아직 추첨되지 않은 미래 회차가 이전 회차 번호를 중복 반환하는지 검증
+            for drw in range(candidate, candidate - 5, -1):
+                data = fetch_one_round(drw)
+                if data:
+                    prev_data = fetch_one_round(drw - 1)
+                    if prev_data and data[1:] == prev_data[1:]:
+                        continue # 미추첨 회차이므로 건너뜀
+                    return drw
+    except Exception as e:
+        print(f"최신 회차 조회 실패: {e}")
+
+    last = get_last_drw_no()
+    return last if last > 0 else 1245
 
 def update_history():
     print(f"### 로또 데이터 고속 업데이트 (Multi-threading) ###")
     last_drw = get_last_drw_no()
-    
-    # 최신 회차 확인 (API로 마지막 번호 확인)
+
+    # 최신 회차 확인
     print("최신 회차 정보를 확인 중입니다...")
     latest_drw = get_latest_official_round()
-    
+
     if last_drw >= latest_drw:
-        print("이미 최신 데이터입니다. 업데이트할 내용이 없습니다.")
+        print(f"이미 최신 데이터입니다 ({last_drw}회). 업데이트할 내용이 없습니다.")
         return
 
     start_drw = last_drw + 1
     end_drw = latest_drw
     total_to_fetch = end_drw - start_drw + 1
-    
+
     print(f"업데이트 구간: {start_drw}회 ~ {end_drw}회 (총 {total_to_fetch}건)")
     print("고속 다운로드를 시작합니다... (잠시만 기다려주세요)")
 
     new_data = []
-    
-    # 병렬 처리 시작 (동시에 20개씩 요청)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        # 작업 예약
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_drw = {executor.submit(fetch_one_round, i): i for i in range(start_drw, end_drw + 1)}
-        
+
         completed = 0
         for future in concurrent.futures.as_completed(future_to_drw):
             result = future.result()
             if result:
                 new_data.append(result)
-            
-            # 진행률 표시
+
             completed += 1
             if completed % 10 == 0 or completed == total_to_fetch:
                 print(f"-> 진행률: {completed}/{total_to_fetch} ({(completed/total_to_fetch)*100:.1f}%)", end='\r')
 
     print("\n데이터 정렬 및 저장 중...")
-    
-    # 병렬 처리는 순서가 뒤죽박죽이므로 회차순 정렬 필수
+
     new_data.sort(key=lambda x: x[0])
 
     if new_data:
@@ -102,7 +124,7 @@ def update_history():
             if mode == 'w':
                 writer.writerow(["DrwNo", "N1", "N2", "N3", "N4", "N5", "N6", "Bonus"])
             writer.writerows(new_data)
-        print(f"✅ 업데이트 완료! 총 {len(new_data)}건이 추가되었습니다.")
+        print(f"✅ 업데이트 완료! 총 {len(new_data)}건이 추가되었습니다. (마지막 회차: {new_data[-1][0]}회)")
     else:
         print("추가할 데이터가 없습니다.")
 
