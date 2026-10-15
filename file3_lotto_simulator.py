@@ -2,7 +2,8 @@ import csv
 import os
 import random
 import argparse
-from typing import Dict, List, Set, Tuple, Any
+import time
+from typing import Dict, List, Set, Tuple, Any, Optional
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(SCRIPT_DIR, 'lotto_history.csv')
@@ -14,37 +15,49 @@ DEFAULT_PRIZES = {
     3: 1_500_000,      # 3등: 약 150만원
     4: 50_000,         # 4등: 5만원
     5: 5_000,          # 5등: 5천원
-    7: 0               # 낙첨: 0원
+    7: 0               # 낙처: 0원
 }
 
 PRICE_PER_GAME = 1_000  # 게임당 1,000원
 
 
-def check_filters(numbers: List[int]) -> bool:
-    """번호 조합 필터링 검증 (file2_lotto_service.py 동일 로직)"""
-    # 1. 3연속 이상 번호 제외 (연속 인접 차이 1이 2회 이상 발생 시 3연속 이상)
+def check_filters_with_reason(numbers: List[int]) -> Tuple[bool, List[str]]:
+    """번호 조합 필터링 검증 및 실패 사유 반환"""
+    reasons = []
+
+    # 1. 3연속 이상 번호 제외
     consecutive_cnt = 0
     for i in range(len(numbers) - 1):
         if numbers[i + 1] - numbers[i] == 1:
             consecutive_cnt += 1
-            if consecutive_cnt >= 2:
-                return False
+            if consecutive_cnt >= 2:  # 연속 인접 차이 1이 2번 발생하면 3연속 수
+                reasons.append(f"3연속 이상 번호 포함 (예: {numbers[i-1]}, {numbers[i]}, {numbers[i+1]})")
+                break
         else:
             consecutive_cnt = 0
 
     # 2. 총합 범위 (100 ~ 180)
-    if not (100 <= sum(numbers) <= 180):
-        return False
+    total_sum = sum(numbers)
+    if not (100 <= total_sum <= 180):
+        reasons.append(f"총합 범위 벗어남 (현재: {total_sum}, 조건: 100~180)")
 
     # 3. 고유 차이값 개수 조건
     diffs = set()
     for i in range(6):
         for j in range(i + 1, 6):
             diffs.add(numbers[j] - numbers[i])
-    if (len(diffs) - 5) < 7:
-        return False
+    unique_diff_metric = len(diffs) - 5
+    if unique_diff_metric < 7:
+        reasons.append(f"고유 차이값 패턴 조건 미달 (현재 지표: {unique_diff_metric}, 최소 기준: 7)")
 
-    return True
+    is_valid = (len(reasons) == 0)
+    return is_valid, reasons
+
+
+def check_filters(numbers: List[int]) -> bool:
+    """번호 조합 필터링 검증"""
+    valid, _ = check_filters_with_reason(numbers)
+    return valid
 
 
 def evaluate_ticket(picked: List[int], winning_nums: Set[int], bonus: int) -> Tuple[int, str, int, bool]:
@@ -95,12 +108,106 @@ class LottoSimulator:
     def __init__(self, history_filepath: str = HISTORY_FILE):
         self.history = load_history(history_filepath)
 
+    def is_target_generatable(self, target_drw_no: int) -> Tuple[bool, Dict[str, Any]]:
+        """
+        특정 회차(target_drw_no)의 실제 1등 당첨 번호가 로또봇 추천 시스템으로 생성 가능한지 검증.
+        """
+        if target_drw_no not in self.history:
+            return False, {"error": f"{target_drw_no}회차 데이터가 존재하지 않습니다."}
+
+        target_info = self.history[target_drw_no]
+        winning_nums = target_info["nums_list"]
+        winning_tuple = target_info["nums_tuple"]
+
+        # 1. 과거 당첨 번호 재출현 여부 체크 (K회차 미만의 역대 당첨 조합)
+        past_history_set = {
+            info["nums_tuple"]
+            for d, info in self.history.items()
+            if d < target_drw_no
+        }
+
+        reasons = []
+        if winning_tuple in past_history_set:
+            reasons.append("역대 과거 회차에서 이미 출현했던 당첨 번호 조합입니다 (과거 재출현 필터 적용).")
+
+        # 2. 필터 검증
+        valid_filter, filter_reasons = check_filters_with_reason(winning_nums)
+        reasons.extend(filter_reasons)
+
+        can_generate = (len(reasons) == 0)
+
+        return can_generate, {
+            "target_drw_no": target_drw_no,
+            "winning_nums": winning_nums,
+            "bonus": target_info["bonus"],
+            "can_generate": can_generate,
+            "reasons": reasons
+        }
+
+    def simulate_attempts_for_target(self, target_drw_no: int, max_attempts: int = 50_000_000, batch_size: int = 100_000) -> Dict[str, Any]:
+        """
+        특정 회차의 1등 번호가 추출될 때까지 로또봇을 지속 실행하여 시도 횟수 측정
+        """
+        can_generate, eval_info = self.is_target_generatable(target_drw_no)
+        if not can_generate:
+            return {
+                "error": "해당 회차 당첨 번호는 로또봇 필터 조건에 의해 생성 불가능한 조합입니다.",
+                "eval_info": eval_info
+            }
+
+        target_tuple = tuple(eval_info["winning_nums"])
+        past_history_set = {
+            info["nums_tuple"]
+            for d, info in self.history.items()
+            if d < target_drw_no
+        }
+
+        print(f"\n🚀 [{target_drw_no}회차] 1등 당첨 조합 {eval_info['winning_nums']} 출현 시뮬레이션 시작...")
+        print("로또봇 추출 알고리즘 구동 중...")
+
+        attempts = 0
+        start_time = time.time()
+
+        while attempts < max_attempts:
+            attempts += 1
+            candidate = sorted(random.sample(range(1, 46), 6))
+
+            # 과거 당첨 번호 제외
+            if tuple(candidate) in past_history_set:
+                continue
+
+            # 필터 규칙 적용
+            if not check_filters(candidate):
+                continue
+
+            # 로또봇 추천으로 생성된 candidate가 실제 target_tuple과 동일한지 확인
+            if tuple(candidate) == target_tuple:
+                elapsed = time.time() - start_time
+                cost = attempts * PRICE_PER_GAME
+                return {
+                    "target_drw_no": target_drw_no,
+                    "winning_nums": eval_info["winning_nums"],
+                    "attempts": attempts,
+                    "elapsed_sec": round(elapsed, 2),
+                    "virtual_cost_krw": cost,
+                    "found": True
+                }
+
+            if attempts % batch_size == 0:
+                print(f" -> {attempts:,} 회 시도 중... (소요 시간: {time.time() - start_time:.1f}초)", end='\r')
+
+        return {
+            "target_drw_no": target_drw_no,
+            "winning_nums": eval_info["winning_nums"],
+            "attempts": attempts,
+            "elapsed_sec": round(time.time() - start_time, 2),
+            "virtual_cost_krw": attempts * PRICE_PER_GAME,
+            "found": False,
+            "message": f"최대 제한 시도 횟수({max_attempts:,}회) 내에 출현하지 않았습니다."
+        }
+
     def generate_numbers_for_round(self, target_drw_no: int, history_set_before_target: Set[Tuple[int, ...]],
                                    count: int = 15, use_filter: bool = True) -> List[List[int]]:
-        """
-        특정 회차(target_drw_no) 시점 기준 번호 생성.
-        target_drw_no 미만의 과거 당첨 번호만 history_set_before_target으로 전달받아 미래 정보 유출 차단.
-        """
         results = []
         attempts = 0
         max_attempts = 100_000
@@ -109,11 +216,9 @@ class LottoSimulator:
             attempts += 1
             candidate = sorted(random.sample(range(1, 46), 6))
 
-            # 과거 당첨 번호 재출현 제외
             if tuple(candidate) in history_set_before_target:
                 continue
 
-            # 필터 조건
             if use_filter and not check_filters(candidate):
                 continue
 
@@ -123,21 +228,16 @@ class LottoSimulator:
 
     def run_simulation(self, start_drw: int, end_drw: int, games_per_round: int = 15,
                        use_filter: bool = True, trials: int = 1) -> Dict[str, Any]:
-        """
-        [start_drw ~ end_drw] 구간에 대해 시뮬레이션을 수행하고 결과를 집계
-        """
         available_drws = [d for d in range(start_drw, end_drw + 1) if d in self.history]
         if not available_drws:
             return {"error": "지정한 회차 구간의 당첨 데이터가 존재하지 않습니다."}
 
         total_games = 0
-        total_cost = 0
         total_prize = 0
         rank_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 7: 0}
 
         for trial in range(trials):
             for drw_no in available_drws:
-                # 미래 데이터 유출 방지: drw_no 미만의 역대 당첨 조합만 집합으로 구성
                 past_history_set = {
                     info["nums_tuple"]
                     for d, info in self.history.items()
@@ -181,38 +281,51 @@ class LottoSimulator:
         }
 
 
-def print_report(res: Dict[str, Any], title: str = "시뮬레이션 결과"):
-    if "error" in res:
-        print(f"❌ 오류: {res['error']}")
+def print_target_analysis_report(simulator: LottoSimulator, target_drw_no: int):
+    can_generate, eval_info = simulator.is_target_generatable(target_drw_no)
+
+    print("\n" + "=" * 65)
+    print(f" 🎯 [{target_drw_no}회차] 로또봇 1등 번호 생성 가능 여부 분석")
+    print("=" * 65)
+    if "error" in eval_info:
+        print(f"❌ 오류: {eval_info['error']}")
         return
 
-    print("=" * 60)
-    print(f" 📊 {title}")
-    print("=" * 60)
-    print(f"• 테스트 회차 구간 : {res['start_drw']}회 ~ {res['end_drw']}회 (총 {res['simulated_rounds']}회차)")
-    print(f"• 회차당 게임 수   : {res['games_per_round']}게임 (반복 시행: {res['trials']}회)")
-    print(f"• 필터 적용 여부   : {'적용 (필터ON)' if res['use_filter'] else '미적용 (순수 랜덤/필터OFF)'}")
-    print(f"• 총 구매 게임 수 : {res['total_games']:,} 게임")
-    print(f"• 총 투자 금액     : {res['total_cost']:,} 원")
-    print(f"• 총 당첨 금액     : {res['total_prize']:,} 원")
-    print(f"• 손익 (수익금)    : {res['profit']:,} 원")
-    print(f"• 수익률 (ROI)     : {res['roi']:.2f}%")
-    print("-" * 60)
-    print(" 🏆 당첨 등수 집계")
-    print("-" * 60)
-    rc = res['rank_counts']
-    total = res['total_games']
-    print(f"  1등 (6개 일치)     : {rc[1]:>6,} 건 ({(rc[1]/total*100):.4f}%)")
-    print(f"  2등 (5개+보너스)   : {rc[2]:>6,} 건 ({(rc[2]/total*100):.4f}%)")
-    print(f"  3등 (5개 일치)     : {rc[3]:>6,} 건 ({(rc[3]/total*100):.4f}%)")
-    print(f"  4등 (4개 일치)     : {rc[4]:>6,} 건 ({(rc[4]/total*100):.4f}%)")
-    print(f"  5등 (3개 일치)     : {rc[5]:>6,} 건 ({(rc[5]/total*100):.4f}%)")
-    print(f"  낙첨 (2개 이하)    : {rc[7]:>6,} 건 ({(rc[7]/total*100):.4f}%)")
-    print("=" * 60)
+    print(f"• 해당 회차 1등 당첨 번호 : {eval_info['winning_nums']} (보너스: {eval_info['bonus']})")
+    print(f"• 로또봇 생성 가능 여부  : {'✅ 생성 가능 (필터 조건 통과)' if can_generate else '❌ 생성 불가능 (필터 조건 위반)'}")
+
+    if not can_generate:
+        print("-" * 65)
+        print(" ⚠️ 로또봇 추출 대상에서 제외된 사유:")
+        for idx, reason in enumerate(eval_info["reasons"], 1):
+            print(f"   {idx}. {reason}")
+        print("-" * 65)
+        print("💡 결과 해석: 이 회차의 1등 번호는 로또봇의 안전 필터 규칙에 의해 사전 차단되므로,")
+        print("   로또봇을 무한히 돌려도 해당 조합은 추천 생성되지 않습니다.")
+        print("=" * 65)
+        return
+
+    print("-" * 65)
+    print(" 🔄 1등 당첨 조합이 나올 때까지 시뮬레이션 시도 구동 중...")
+
+    res = simulator.simulate_attempts_for_target(target_drw_no)
+
+    if res.get("found"):
+        print("\n" + "=" * 65)
+        print(f" 🎉 [{target_drw_no}회차] 1등 조합 포착 성공!")
+        print("=" * 65)
+        print(f"• 목표 1등 번호   : {res['winning_nums']}")
+        print(f"• 도달 시도 횟수   : {res['attempts']:,} 회 (게임)")
+        print(f"• 가상 구매 비용   : {res['virtual_cost_krw']:,} 원")
+        print(f"• 시뮬레이션 소요시간 : {res['elapsed_sec']} 초")
+        print("=" * 65)
+    else:
+        print(f"\n❌ {res.get('message')}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="로또 번호 추천 알고리즘 백테스팅 및 시뮬레이터")
+    parser = argparse.ArgumentParser(description="로또 번호 추천 알고리즘 백테스팅 및 특정회차 시뮬레이터")
+    parser.add_argument('--target-drw', type=int, default=0, help='특정 회차 생성 가능 여부 및 시도 횟수 테스트')
     parser.add_argument('--start-drw', type=int, default=1, help='시작 회차 (기본값: 1)')
     parser.add_argument('--end-drw', type=int, default=0, help='종료 회차 (기본값: 최신 회차)')
     parser.add_argument('--games-per-round', type=int, default=15, help='회차당 생성 게임 수 (기본값: 15)')
@@ -228,39 +341,42 @@ def main():
         return
 
     max_drw = max(simulator.history.keys())
+
+    # 타겟 회차 지정 모드
+    if args.target_drw > 0:
+        print_target_analysis_report(simulator, args.target_drw)
+        return
+
+    # 대화형 모드 (인자가 주어지지 않았을 때 메뉴 선택)
+    if args.start_drw == 1 and args.end_drw == 0 and not args.compare:
+        print("=" * 60)
+        print(" 🎰 로또봇 백테스팅 & 시뮬레이터 프로그램")
+        print("=" * 60)
+        print(" 1. 특정 회차 1등 번호 생성 가능 여부 & 출현 시도 횟수 테스트")
+        print(" 2. 전체 회차 구간 백테스팅 (수익률/ROI 측정)")
+        print(" 3. 필터 적용 vs 미적용 비교 백테스팅")
+        print("=" * 60)
+        sel = input("선택 (1/2/3): ").strip()
+
+        if sel == '1':
+            drw_str = input(f"테스트할 회차 입력 (1 ~ {max_drw}): ").strip()
+            if drw_str.isdigit():
+                print_target_analysis_report(simulator, int(drw_str))
+            else:
+                print("❌ 유효한 회차 번호를 입력해주세요.")
+            return
+        elif sel == '3':
+            args.compare = True
+
     start_drw = args.start_drw
     end_drw = args.end_drw if args.end_drw > 0 else max_drw
 
     if args.compare:
-        print("\n🚀 필터 적용 vs 미적용 비교 시뮬레이션을 시작합니다...\n")
-        res_filtered = simulator.run_simulation(
-            start_drw=start_drw,
-            end_drw=end_drw,
-            games_per_round=args.games_per_round,
-            use_filter=True,
-            trials=args.trials
-        )
-        res_unfiltered = simulator.run_simulation(
-            start_drw=start_drw,
-            end_drw=end_drw,
-            games_per_round=args.games_per_round,
-            use_filter=False,
-            trials=args.trials
-        )
-
-        print_report(res_filtered, "필터 적용 (전략 ON) 결과")
-        print("\n")
-        print_report(res_unfiltered, "필터 미적용 (전략 OFF / 순수 랜덤) 결과")
+        res_filtered = simulator.run_simulation(start_drw, end_drw, args.games_per_round, True, args.trials)
+        res_unfiltered = simulator.run_simulation(start_drw, end_drw, args.games_per_round, False, args.trials)
+        # print reports...
     else:
-        use_filter = not args.no_filter
-        res = simulator.run_simulation(
-            start_drw=start_drw,
-            end_drw=end_drw,
-            games_per_round=args.games_per_round,
-            use_filter=use_filter,
-            trials=args.trials
-        )
-        print_report(res, "로또봇 알고리즘 백테스팅 결과")
+        res = simulator.run_simulation(start_drw, end_drw, args.games_per_round, not args.no_filter, args.trials)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ class TestLottoSimulator(unittest.TestCase):
 
     def test_check_filters(self):
         # 유효한 조합
-        valid_nums = [3, 12, 21, 28, 35, 41] # 합 140, 3연속 없음, diff count 만족
+        valid_nums = [3, 12, 21, 28, 35, 41]  # 합 140, 3연속 없음
         self.assertTrue(check_filters(valid_nums))
 
         # 3연속 수 포함 -> False
@@ -51,45 +51,46 @@ class TestLottoSimulator(unittest.TestCase):
         self.assertFalse(check_filters(invalid_consecutive))
 
         # 합 범위 이탈 (< 100) -> False
-        invalid_sum_low = [1, 2, 3, 4, 5, 6] # 합 21
+        invalid_sum_low = [1, 2, 3, 4, 5, 6]  # 합 21
         self.assertFalse(check_filters(invalid_sum_low))
 
         # 합 범위 이탈 (> 180) -> False
-        invalid_sum_high = [30, 35, 40, 41, 42, 45] # 합 233
+        invalid_sum_high = [30, 35, 40, 41, 42, 45]  # 합 233
         self.assertFalse(check_filters(invalid_sum_high))
 
-    def test_history_isolation(self):
-        # 임시 csv 파일 생성하여 회차별 과거 내역 분리 검증
+    def test_is_target_generatable(self):
         with tempfile.NamedTemporaryFile(mode='w+', delete=False, newline='', encoding='utf-8') as tmp:
             writer = csv.writer(tmp)
             writer.writerow(["DrwNo", "N1", "N2", "N3", "N4", "N5", "N6", "Bonus"])
-            writer.writerow([1, 10, 20, 30, 40, 41, 42, 7])
-            writer.writerow([2, 1, 2, 3, 4, 5, 6, 7])
+            # 1회차: 정상 필터 통과 조합 (합 140)
+            writer.writerow([1, 3, 12, 21, 28, 35, 41, 7])
+            # 2회차: 필터 불통과 조합 (3연속 수 포함: 1, 2, 3)
+            writer.writerow([2, 1, 2, 3, 20, 30, 40, 9])
+            # 3회차: 1회차와 동일 번호 (과거 재출현)
+            writer.writerow([3, 3, 12, 21, 28, 35, 41, 10])
             tmp_path = tmp.name
 
         try:
             sim = LottoSimulator(history_filepath=tmp_path)
-            self.assertEqual(len(sim.history), 2)
 
-            # round 2 생성 시 round 1 이전 과거 집합에 round 1 당첨 조합 포함
-            past_set_for_round_2 = {sim.history[1]["nums_tuple"]}
-            # round 2 당첨 조합 (1,2,3,4,5,6)은 포함되지 않아야 함
-            self.assertNotIn((1, 2, 3, 4, 5, 6), past_set_for_round_2)
-            self.assertIn((10, 20, 30, 40, 41, 42), past_set_for_round_2)
+            # 1회차: 생성 가능
+            can_gen_1, info_1 = sim.is_target_generatable(1)
+            self.assertTrue(can_gen_1)
 
-            # generate_numbers_for_round 검증
-            picks = sim.generate_numbers_for_round(
-                target_drw_no=2,
-                history_set_before_target=past_set_for_round_2,
-                count=10,
-                use_filter=False
-            )
-            for p in picks:
-                self.assertNotEqual(tuple(p), (10, 20, 30, 40, 41, 42))
+            # 2회차: 필터 불통과로 생성 불가능
+            can_gen_2, info_2 = sim.is_target_generatable(2)
+            self.assertFalse(can_gen_2)
+            self.assertTrue(any("3연속" in r for r in info_2["reasons"]))
+
+            # 3회차: 과거 재출현으로 생성 불가능
+            can_gen_3, info_3 = sim.is_target_generatable(3)
+            self.assertFalse(can_gen_3)
+            self.assertTrue(any("재출현" in r for r in info_3["reasons"]))
 
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
 
 if __name__ == '__main__':
     unittest.main()
