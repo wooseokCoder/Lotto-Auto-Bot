@@ -3,7 +3,15 @@ import os
 import random
 import argparse
 import time
+import threading
 from typing import Dict, List, Set, Tuple, Any, Optional
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    HAS_TKINTER = True
+except ImportError:
+    HAS_TKINTER = False
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(SCRIPT_DIR, 'lotto_history.csv')
@@ -15,7 +23,7 @@ DEFAULT_PRIZES = {
     3: 1_500_000,      # 3등: 약 150만원
     4: 50_000,         # 4등: 5만원
     5: 5_000,          # 5등: 5천원
-    7: 0               # 낙처: 0원
+    7: 0               # 낙첨: 0원
 }
 
 PRICE_PER_GAME = 1_000  # 게임당 1,000원
@@ -109,9 +117,6 @@ class LottoSimulator:
         self.history = load_history(history_filepath)
 
     def is_target_generatable(self, target_drw_no: int) -> Tuple[bool, Dict[str, Any]]:
-        """
-        특정 회차(target_drw_no)의 실제 1등 당첨 번호가 로또봇 추천 시스템으로 생성 가능한지 검증.
-        """
         if target_drw_no not in self.history:
             return False, {"error": f"{target_drw_no}회차 데이터가 존재하지 않습니다."}
 
@@ -119,7 +124,6 @@ class LottoSimulator:
         winning_nums = target_info["nums_list"]
         winning_tuple = target_info["nums_tuple"]
 
-        # 1. 과거 당첨 번호 재출현 여부 체크 (K회차 미만의 역대 당첨 조합)
         past_history_set = {
             info["nums_tuple"]
             for d, info in self.history.items()
@@ -130,7 +134,6 @@ class LottoSimulator:
         if winning_tuple in past_history_set:
             reasons.append("역대 과거 회차에서 이미 출현했던 당첨 번호 조합입니다 (과거 재출현 필터 적용).")
 
-        # 2. 필터 검증
         valid_filter, filter_reasons = check_filters_with_reason(winning_nums)
         reasons.extend(filter_reasons)
 
@@ -144,10 +147,8 @@ class LottoSimulator:
             "reasons": reasons
         }
 
-    def simulate_attempts_for_target(self, target_drw_no: int, max_attempts: int = 50_000_000, batch_size: int = 100_000) -> Dict[str, Any]:
-        """
-        특정 회차의 1등 번호가 추출될 때까지 로또봇을 지속 실행하여 시도 횟수 측정
-        """
+    def simulate_attempts_for_target(self, target_drw_no: int, max_attempts: int = 50_000_000,
+                                     callback=None) -> Dict[str, Any]:
         can_generate, eval_info = self.is_target_generatable(target_drw_no)
         if not can_generate:
             return {
@@ -162,29 +163,24 @@ class LottoSimulator:
             if d < target_drw_no
         }
 
-        print(f"\n🚀 [{target_drw_no}회차] 1등 당첨 조합 {eval_info['winning_nums']} 출현 시뮬레이션 시작...")
-        print("로또봇 추출 알고리즘 구동 중...")
-
         attempts = 0
         start_time = time.time()
+        batch_size = 100_000
 
         while attempts < max_attempts:
             attempts += 1
             candidate = sorted(random.sample(range(1, 46), 6))
 
-            # 과거 당첨 번호 제외
             if tuple(candidate) in past_history_set:
                 continue
 
-            # 필터 규칙 적용
             if not check_filters(candidate):
                 continue
 
-            # 로또봇 추천으로 생성된 candidate가 실제 target_tuple과 동일한지 확인
             if tuple(candidate) == target_tuple:
                 elapsed = time.time() - start_time
                 cost = attempts * PRICE_PER_GAME
-                return {
+                res = {
                     "target_drw_no": target_drw_no,
                     "winning_nums": eval_info["winning_nums"],
                     "attempts": attempts,
@@ -192,11 +188,18 @@ class LottoSimulator:
                     "virtual_cost_krw": cost,
                     "found": True
                 }
+                if callback:
+                    callback(res, False)
+                return res
 
-            if attempts % batch_size == 0:
-                print(f" -> {attempts:,} 회 시도 중... (소요 시간: {time.time() - start_time:.1f}초)", end='\r')
+            if callback and attempts % batch_size == 0:
+                elapsed = time.time() - start_time
+                callback({
+                    "attempts": attempts,
+                    "elapsed_sec": round(elapsed, 1)
+                }, True)
 
-        return {
+        res = {
             "target_drw_no": target_drw_no,
             "winning_nums": eval_info["winning_nums"],
             "attempts": attempts,
@@ -205,6 +208,9 @@ class LottoSimulator:
             "found": False,
             "message": f"최대 제한 시도 횟수({max_attempts:,}회) 내에 출현하지 않았습니다."
         }
+        if callback:
+            callback(res, False)
+        return res
 
     def generate_numbers_for_round(self, target_drw_no: int, history_set_before_target: Set[Tuple[int, ...]],
                                    count: int = 15, use_filter: bool = True) -> List[List[int]]:
@@ -281,6 +287,174 @@ class LottoSimulator:
         }
 
 
+if HAS_TKINTER:
+    class LottoSimulatorGUI:
+        def __init__(self, root: tk.Tk):
+            self.root = root
+            self.root.title("🎰 로또봇 백테스팅 & 시뮬레이터")
+            self.root.geometry("780x680")
+
+            self.simulator = LottoSimulator()
+            if not self.simulator.history:
+                messagebox.showerror("오류", "lotto_history.csv 파일을 찾을 수 없거나 비어 있습니다.")
+                return
+
+            self.all_drws = sorted(list(self.simulator.history.keys()), reverse=True)
+            self.create_widgets()
+
+        def create_widgets(self):
+            # Top Frame: 회차 선택 콤보박스
+            top_frame = ttk.LabelFrame(self.root, text=" 🎯 특정 회차 타겟 시뮬레이션 ", padding=10)
+            top_frame.pack(fill="x", padx=15, pady=10)
+
+            ttk.Label(top_frame, text="회차 선택:").grid(row=0, column=0, padx=5, pady=5)
+
+            self.combo_drw = ttk.Combobox(top_frame, values=[f"{d}회" for d in self.all_drws], width=15, state="readonly")
+            if self.all_drws:
+                self.combo_drw.current(0)
+            self.combo_drw.grid(row=0, column=1, padx=5, pady=5)
+
+            btn_check = ttk.Button(top_frame, text="1등 생성 가능 여부 분석", command=self.on_check_generatable)
+            btn_check.grid(row=0, column=2, padx=5, pady=5)
+
+            btn_run = ttk.Button(top_frame, text="1등 포착 시도 횟수 측정 🚀", command=self.on_run_attempts)
+            btn_run.grid(row=0, column=3, padx=5, pady=5)
+
+            # Middle Frame: 구간 백테스팅
+            mid_frame = ttk.LabelFrame(self.root, text=" 📊 구간 백테스팅 & 전략 비교 ", padding=10)
+            mid_frame.pack(fill="x", padx=15, pady=5)
+
+            ttk.Label(mid_frame, text="시작 회차:").grid(row=0, column=0, padx=5, pady=5)
+            self.combo_start = ttk.Combobox(mid_frame, values=[f"{d}회" for d in sorted(self.all_drws)], width=10, state="readonly")
+            self.combo_start.set(f"{min(self.all_drws)}회")
+            self.combo_start.grid(row=0, column=1, padx=5, pady=5)
+
+            ttk.Label(mid_frame, text="종료 회차:").grid(row=0, column=2, padx=5, pady=5)
+            self.combo_end = ttk.Combobox(mid_frame, values=[f"{d}회" for d in sorted(self.all_drws)], width=10, state="readonly")
+            self.combo_end.set(f"{max(self.all_drws)}회")
+            self.combo_end.grid(row=0, column=3, padx=5, pady=5)
+
+            btn_backtest = ttk.Button(mid_frame, text="전략 비교 백테스팅 (필터 ON vs OFF)", command=self.on_run_backtest)
+            btn_backtest.grid(row=0, column=4, padx=10, pady=5)
+
+            # Log Frame: ScrolledText
+            log_frame = ttk.LabelFrame(self.root, text=" 📜 시뮬레이션 결과 및 로그 ", padding=10)
+            log_frame.pack(fill="both", expand=True, padx=15, pady=10)
+
+            self.txt_log = scrolledtext.ScrolledText(log_frame, wrap="word", font=("Courier", 10))
+            self.txt_log.pack(fill="both", expand=True)
+
+            self.log("✨ 로또봇 시뮬레이터 프로그램에 오신 것을 환영합니다!")
+            self.log(f"• 현재 탑재된 역대 당첨 데이터: 1회 ~ {max(self.all_drws)}회")
+            self.log("• 상단 콤보박스에서 회차를 선택하여 1등 번호 생성 테스트를 진행하세요.\n" + "="*65)
+
+        def log(self, msg: str):
+            self.txt_log.insert(tk.END, msg + "\n")
+            self.txt_log.see(tk.END)
+
+        def clear_log(self):
+            self.txt_log.delete("1.0", tk.END)
+
+        def get_selected_drw(self, combo: ttk.Combobox) -> int:
+            val = combo.get().replace("회", "").strip()
+            return int(val) if val.isdigit() else 0
+
+        def on_check_generatable(self):
+            drw = self.get_selected_drw(self.combo_drw)
+            if not drw:
+                messagebox.showwarning("경고", "회차를 선택해주세요.")
+                return
+
+            can_gen, info = self.simulator.is_target_generatable(drw)
+            self.clear_log()
+            self.log("=" * 65)
+            self.log(f" 🎯 [{drw}회차] 로또봇 1등 번호 생성 가능 여부 분석")
+            self.log("=" * 65)
+            self.log(f"• 1등 당첨 번호: {info['winning_nums']} (보너스: {info['bonus']})")
+            self.log(f"• 생성 가능 여부: {'✅ 생성 가능 (필터 조건 통과)' if can_gen else '❌ 생성 불가능 (필터 조건 위반)'}")
+
+            if not can_gen:
+                self.log("-" * 65)
+                self.log(" ⚠️ 로또봇 추출 대상 제외 사유:")
+                for idx, r in enumerate(info['reasons'], 1):
+                    self.log(f"   {idx}. {r}")
+                self.log("-" * 65)
+                self.log("💡 이 회차의 1등 번호는 안전 필터 규칙에 의해 사전 차단되는 조합입니다.")
+
+        def on_run_attempts(self):
+            drw = self.get_selected_drw(self.combo_drw)
+            if not drw:
+                messagebox.showwarning("경고", "회차를 선택해주세요.")
+                return
+
+            can_gen, info = self.simulator.is_target_generatable(drw)
+            if not can_gen:
+                self.on_check_generatable()
+                return
+
+            self.clear_log()
+            self.log(f"🚀 [{drw}회차] 1등 조합 {info['winning_nums']} 시뮬레이션 구동 시작...")
+            self.log("로또봇 알고리즘으로 번호를 계속 추출 중입니다... 잠시만 기다려주세요.")
+
+            def worker():
+                def cb(data, is_intermediate):
+                    if is_intermediate:
+                        self.root.after(0, lambda: self.log(f" -> {data['attempts']:,}회 시도 중... (소요시간: {data['elapsed_sec']}초)"))
+                    else:
+                        self.root.after(0, lambda: self.display_attempts_result(data))
+
+                self.simulator.simulate_attempts_for_target(drw, callback=cb)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def display_attempts_result(self, res: dict):
+            if res.get("found"):
+                self.log("\n" + "=" * 65)
+                self.log(f" 🎉 [{res['target_drw_no']}회차] 1등 조합 포착 성공!")
+                self.log("=" * 65)
+                self.log(f"• 목표 1등 번호 : {res['winning_nums']}")
+                self.log(f"• 도달 시도 횟수 : {res['attempts']:,} 회")
+                self.log(f"• 가상 구매 비용 : {res['virtual_cost_krw']:,} 원")
+                self.log(f"• 시뮬레이션 소요시간 : {res['elapsed_sec']} 초")
+                self.log("=" * 65)
+            else:
+                self.log(f"\n❌ {res.get('message')}")
+
+        def on_run_backtest(self):
+            start_drw = self.get_selected_drw(self.combo_start)
+            end_drw = self.get_selected_drw(self.combo_end)
+
+            if start_drw > end_drw:
+                messagebox.showwarning("경고", "시작 회차는 종료 회차보다 작거나 같아야 합니다.")
+                return
+
+            self.clear_log()
+            self.log(f"🚀 구간 백테스팅 구동 중 ({start_drw}회 ~ {end_drw}회)...")
+
+            def worker():
+                res_filtered = self.simulator.run_simulation(start_drw, end_drw, use_filter=True)
+                res_unfiltered = self.simulator.run_simulation(start_drw, end_drw, use_filter=False)
+                self.root.after(0, lambda: self.display_backtest_result(res_filtered, res_unfiltered))
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def display_backtest_result(self, res_f: dict, res_u: dict):
+            self.log("=" * 65)
+            self.log(f" 📊 필터 적용 (전략 ON) 백테스팅 결과")
+            self.log("=" * 65)
+            self.log(f"• 구매 게임 수 : {res_f['total_games']:,} 게임 | 총 투자금 : {res_f['total_cost']:,} 원")
+            self.log(f"• 총 당첨 금액 : {res_f['total_prize']:,} 원 | 수익률 (ROI) : {res_f['roi']:.2f}%")
+            self.log(f"• 등수 집계     : 1등:{res_f['rank_counts'][1]} / 2등:{res_f['rank_counts'][2]} / 3등:{res_f['rank_counts'][3]} / 4등:{res_f['rank_counts'][4]} / 5등:{res_f['rank_counts'][5]}")
+
+            self.log("\n" + "=" * 65)
+            self.log(f" 📊 필터 미적용 (전략 OFF / 순수 랜덤) 백테스팅 결과")
+            self.log("=" * 65)
+            self.log(f"• 구매 게임 수 : {res_u['total_games']:,} 게임 | 총 투자금 : {res_u['total_cost']:,} 원")
+            self.log(f"• 총 당첨 금액 : {res_u['total_prize']:,} 원 | 수익률 (ROI) : {res_u['roi']:.2f}%")
+            self.log(f"• 등수 집계     : 1등:{res_u['rank_counts'][1]} / 2등:{res_u['rank_counts'][2]} / 3등:{res_u['rank_counts'][3]} / 4등:{res_u['rank_counts'][4]} / 5등:{res_u['rank_counts'][5]}")
+            self.log("=" * 65)
+
+
 def print_target_analysis_report(simulator: LottoSimulator, target_drw_no: int):
     can_generate, eval_info = simulator.is_target_generatable(target_drw_no)
 
@@ -324,7 +498,8 @@ def print_target_analysis_report(simulator: LottoSimulator, target_drw_no: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="로또 번호 추천 알고리즘 백테스팅 및 특정회차 시뮬레이터")
+    parser = argparse.ArgumentParser(description="로또 번호 추천 알고리즘 백테스팅 및 특정회차 GUI 시뮬레이터")
+    parser.add_argument('--gui', action='store_true', help='Tkinter GUI 화면 실행')
     parser.add_argument('--target-drw', type=int, default=0, help='특정 회차 생성 가능 여부 및 시도 횟수 테스트')
     parser.add_argument('--start-drw', type=int, default=1, help='시작 회차 (기본값: 1)')
     parser.add_argument('--end-drw', type=int, default=0, help='종료 회차 (기본값: 최신 회차)')
@@ -335,6 +510,16 @@ def main():
 
     args = parser.parse_args()
 
+    # GUI 실행 요청
+    if args.gui:
+        if not HAS_TKINTER:
+            print("❌ Tkinter 모듈을 불러올 수 없어 GUI 모드를 실행하지 못합니다.")
+            return
+        root = tk.Tk()
+        app = LottoSimulatorGUI(root)
+        root.mainloop()
+        return
+
     simulator = LottoSimulator()
     if not simulator.history:
         print("❌ lotto_history.csv 파일이 없거나 비어 있습니다.")
@@ -342,23 +527,29 @@ def main():
 
     max_drw = max(simulator.history.keys())
 
-    # 타겟 회차 지정 모드
     if args.target_drw > 0:
         print_target_analysis_report(simulator, args.target_drw)
         return
 
-    # 대화형 모드 (인자가 주어지지 않았을 때 메뉴 선택)
     if args.start_drw == 1 and args.end_drw == 0 and not args.compare:
         print("=" * 60)
         print(" 🎰 로또봇 백테스팅 & 시뮬레이터 프로그램")
         print("=" * 60)
-        print(" 1. 특정 회차 1등 번호 생성 가능 여부 & 출현 시도 횟수 테스트")
-        print(" 2. 전체 회차 구간 백테스팅 (수익률/ROI 측정)")
+        print(" 1. Tkinter GUI 화면으로 실행하기")
+        print(" 2. 특정 회차 1등 번호 생성 가능 여부 & 출현 시도 횟수 테스트")
         print(" 3. 필터 적용 vs 미적용 비교 백테스팅")
         print("=" * 60)
         sel = input("선택 (1/2/3): ").strip()
 
         if sel == '1':
+            if HAS_TKINTER:
+                root = tk.Tk()
+                app = LottoSimulatorGUI(root)
+                root.mainloop()
+            else:
+                print("❌ GUI 환경이 지원되지 않습니다.")
+            return
+        elif sel == '2':
             drw_str = input(f"테스트할 회차 입력 (1 ~ {max_drw}): ").strip()
             if drw_str.isdigit():
                 print_target_analysis_report(simulator, int(drw_str))
@@ -374,9 +565,22 @@ def main():
     if args.compare:
         res_filtered = simulator.run_simulation(start_drw, end_drw, args.games_per_round, True, args.trials)
         res_unfiltered = simulator.run_simulation(start_drw, end_drw, args.games_per_round, False, args.trials)
-        # print reports...
-    else:
-        res = simulator.run_simulation(start_drw, end_drw, args.games_per_round, not args.no_filter, args.trials)
+
+        def display_cli_report(res, title):
+            if "error" in res:
+                print(f"❌ 오류: {res['error']}")
+                return
+            print("=" * 60)
+            print(f" 📊 {title}")
+            print("=" * 60)
+            print(f"• 구매 게임 수 : {res['total_games']:,} 게임 | 총 투자금 : {res['total_cost']:,} 원")
+            print(f"• 총 당첨 금액 : {res['total_prize']:,} 원 | 수익률 (ROI) : {res['roi']:.2f}%")
+            print(f"• 등수 집계     : 1등:{res['rank_counts'][1]} / 2등:{res['rank_counts'][2]} / 3등:{res['rank_counts'][3]} / 4등:{res['rank_counts'][4]} / 5등:{res['rank_counts'][5]}")
+            print("=" * 60)
+
+        display_cli_report(res_filtered, "필터 적용 (전략 ON) 백테스팅 결과")
+        print("\n")
+        display_cli_report(res_unfiltered, "필터 미적용 (전략 OFF / 순수 랜덤) 백테스팅 결과")
 
 
 if __name__ == "__main__":
