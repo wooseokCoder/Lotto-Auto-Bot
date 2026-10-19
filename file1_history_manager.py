@@ -50,7 +50,7 @@ def fetch_one_round(drw_no):
         resp = requests.get(url, headers=HEADERS, timeout=5)
         soup = BeautifulSoup(resp.text, 'html.parser')
         spans = soup.find_all('span', class_=re.compile(r'ball|num'))
-        nums = [int(s.text.strip()) for s in spans if s.text.strip().isdigit()]
+        nums = [int(s.text.strip()) for s in spans if s.text.strip().isdigit() and 1 <= int(s.text.strip()) <= 45]
         if len(nums) >= 7 and len(set(nums[:6])) == 6:
             return [drw_no] + nums[:7]
     except Exception as e:
@@ -65,25 +65,23 @@ def get_latest_official_round():
         matches = [int(m) for m in re.findall(r'(\d+)회', resp.text) if 1000 <= int(m) <= 2500]
         if matches:
             candidate = max(matches)
-            # 아직 추첨되지 않은 미래 회차가 이전 회차 번호를 중복 반환하는지 검증
             for drw in range(candidate, candidate - 5, -1):
                 data = fetch_one_round(drw)
                 if data:
                     prev_data = fetch_one_round(drw - 1)
                     if prev_data and data[1:] == prev_data[1:]:
-                        continue # 미추첨 회차이므로 건너뜀
+                        continue
                     return drw
     except Exception as e:
         print(f"최신 회차 조회 실패: {e}")
 
     last = get_last_drw_no()
-    return last if last > 0 else 1245
+    return last if last > 0 else 1246
 
 def update_history():
     print(f"### 로또 데이터 고속 업데이트 (Multi-threading) ###")
     last_drw = get_last_drw_no()
 
-    # 최신 회차 확인
     print("최신 회차 정보를 확인 중입니다...")
     latest_drw = get_latest_official_round()
 
