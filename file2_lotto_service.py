@@ -6,6 +6,9 @@ import argparse
 import sys
 from datetime import datetime
 
+# 당첨 데이터 수집 모듈 연동
+from file1_history_manager import update_history
+
 # 구글 시트 라이브러리
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -28,6 +31,8 @@ class LottoEngine:
         self.load_history()
 
     def load_history(self):
+        self.history_set.clear()
+        self.latest_draw = None
         if not os.path.exists(HISTORY_FILE):
             return
         try:
@@ -53,22 +58,27 @@ class LottoEngine:
                 consecutive_cnt += 1
                 if consecutive_cnt >= 3: return False
             else: consecutive_cnt = 0
-        
+
         if not (100 <= sum(numbers) <= 180): return False
-        
+
         diffs = set()
         for i in range(6):
             for j in range(i + 1, 6):
                 diffs.add(numbers[j] - numbers[i])
         if (len(diffs) - 5) < 7: return False
-        
+
         return True
 
     def generate_numbers(self, count=15):
+        # 1. 번호 생성 전 먼저 당첨 이력 CSV 데이터를 최신화
+        print(">>> [1/2] 로또 당첨 이력 데이터 최신화 확인...")
+        update_history()
+        self.load_history()
+
         results = []
         target_drw_no = (self.latest_draw['drwNo'] + 1) if self.latest_draw else 1
-        
-        print(f"[{target_drw_no}회차] 번호 생성 중...")
+
+        print(f"\n>>> [2/2] [{target_drw_no}회차] 번호 생성 중...")
         attempts = 0
         while len(results) < count:
             attempts += 1
@@ -81,15 +91,21 @@ class LottoEngine:
         save_data = { "target_drw_no": target_drw_no, "picks": results }
         with open(MY_PICKS_FILE, 'w', encoding='utf-8') as f:
             json.dump(save_data, f, indent=4)
-        
+
         print(f"\n-> {count}게임 생성 완료.")
-        
-        # [추가] 시트2에 이번주 번호 업로드
+
+        # 시트2에 이번주 번호 업로드
         self.upload_picks_to_sheet(target_drw_no, results)
 
     def check_my_rank(self):
+        # 1. 당첨 확인 전 먼저 당첨 이력 CSV 데이터를 최신화
+        print(">>> [1/2] 로또 당첨 이력 데이터 최신화 확인...")
+        update_history()
+        self.load_history()
+
+        print("\n>>> [2/2] 내 번호 당첨 결과 확인 중...")
         if not os.path.exists(MY_PICKS_FILE):
-            print("파일 없음.")
+            print("구매/생성된 번호 파일(my_picks.json)이 없습니다.")
             return
 
         with open(MY_PICKS_FILE, 'r', encoding='utf-8') as f:
@@ -97,35 +113,43 @@ class LottoEngine:
 
         target_round = my_data['target_drw_no']
         my_numbers = my_data['picks']
-        
+
         winning_info = None
         if os.path.exists(HISTORY_FILE):
              with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
-                for row in reader:
-                    if row and row[0] == str(target_round):
+                rows = [r for r in reader if r]
+                for row in rows[1:]: # 헤더 제외
+                    if row[0] == str(target_round):
                         winning_info = {"nums": set([int(x) for x in row[1:7]]), "bonus": int(row[7])}
                         break
-        
+
+                # 만약 내 번호의 대상 회차가 최신화 후에도 없으면 마지막 추첨 회차로 안내 및 대조
+                if not winning_info and len(rows) > 1:
+                    last_row = rows[-1]
+                    target_round = int(last_row[0])
+                    winning_info = {"nums": set([int(x) for x in last_row[1:7]]), "bonus": int(last_row[7])}
+                    print(f"[안내] 지정된 회차 번호가 아직 추첨 전이어서, 최신 추첨 회차({target_round}회차) 결과로 진행합니다.")
+
         if not winning_info:
-            print(f"{target_round}회차 결과 없음. file1 실행 필요.")
+            print("당첨 번호 이력 데이터(lotto_history.csv)가 존재하지 않습니다.")
             return
 
-        print(f"### {target_round}회차 확인 ###")
-        
+        print(f"### {target_round}회차 당첨 확인 ###")
+
         best_result = {"rank_val": 7, "rank_str": "낙첨", "matched": 0, "nums": []}
 
         for nums in my_numbers:
             matched = len(winning_info['nums'].intersection(set(nums)))
             is_bonus = winning_info['bonus'] in nums
-            
+
             rank_val, rank_str = 7, "낙첨"
             if matched == 6: rank_val, rank_str = 1, "1등"
             elif matched == 5 and is_bonus: rank_val, rank_str = 2, "2등"
             elif matched == 5: rank_val, rank_str = 3, "3등"
             elif matched == 4: rank_val, rank_str = 4, "4등"
             elif matched == 3: rank_val, rank_str = 5, "5등"
-            
+
             if rank_val < best_result["rank_val"]:
                 best_result = {"rank_val": rank_val, "rank_str": rank_str, "matched": matched, "nums": nums}
             elif rank_val == best_result["rank_val"] and matched > best_result["matched"]:
@@ -133,20 +157,20 @@ class LottoEngine:
 
         print(f"결과: {best_result['rank_str']} (일치: {best_result['matched']}개)")
 
-        # [추가] 시트1에 결과 기록 업로드
+        # 시트1에 결과 기록 업로드
         self.upload_result_to_sheet(target_round, best_result)
 
     # --- 구글 시트 연동 함수들 ---
     def get_gspread_client(self):
         if not os.path.exists(JSON_KEY_FILE):
-            print("[패스] lotto_key.json 없음.")
+            print("[패스] lotto_key.json 인증 키 파일이 없습니다.")
             return None
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
             creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_KEY_FILE, scope)
             return gspread.authorize(creds)
         except Exception as e:
-            print(f"[에러] 구글 접속 실패: {e}")
+            print(f"[에러] 구글 시트 API 인증 실패: {e}")
             return None
 
     def upload_picks_to_sheet(self, round_no, picks):
@@ -155,33 +179,26 @@ class LottoEngine:
         if not client: return
 
         try:
-            # '이번주번호' 시트 열기
             try:
                 sheet = client.open(GOOGLE_SHEET_NAME).worksheet(SHEET2_NAME)
-            except:
-                print(f"[경고] '{SHEET2_NAME}' 시트를 찾을 수 없습니다. 시트를 추가해주세요.")
+            except Exception:
+                print(f"[경고] 구글 시트 문서('{GOOGLE_SHEET_NAME}') 또는 탭('{SHEET2_NAME}')을 찾을 수 없습니다.")
                 return
 
             print("구글 시트(이번주번호) 업데이트 중...", end='')
-            
-            # 기존 내용 깨끗하게 지우기
             sheet.clear()
-            
-            # 헤더 추가
             header = ["생성일시", "회차", "번호1", "번호2", "번호3", "번호4", "번호5", "번호6"]
             sheet.append_row(header)
-            
-            # 데이터 포맷팅 및 추가
+
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             rows = []
             for nums in picks:
-                row = [now_str, f"{round_no}회"] + nums # 리스트 합치기
+                row = [now_str, f"{round_no}회"] + nums
                 rows.append(row)
-            
-            # 한 번에 쓰기 (속도 향상)
+
             sheet.append_rows(rows)
             print(" -> 성공!")
-            
+
         except Exception as e:
             print(f"\n[업로드 실패] {e}")
 
@@ -193,13 +210,12 @@ class LottoEngine:
         try:
             try:
                 sheet = client.open(GOOGLE_SHEET_NAME).worksheet(SHEET1_NAME)
-            except:
-                print(f"[경고] '{SHEET1_NAME}' 시트를 찾을 수 없습니다.")
+            except Exception:
+                print(f"[경고] 구글 시트 문서('{GOOGLE_SHEET_NAME}') 또는 탭('{SHEET1_NAME}')을 찾을 수 없습니다.")
                 return
 
             print("구글 시트(결과기록) 저장 중...", end='')
-            
-            # 헤더가 비어있으면 추가
+
             if not sheet.row_values(1):
                 sheet.append_row(["날짜", "회차", "결과", "일치수", "내번호"])
 
@@ -212,7 +228,7 @@ class LottoEngine:
             ]
             sheet.append_row(row_data)
             print(" -> 성공!")
-            
+
         except Exception as e:
             print(f"\n[업로드 실패] {e}")
 
