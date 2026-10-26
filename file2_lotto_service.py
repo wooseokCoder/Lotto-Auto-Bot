@@ -50,22 +50,32 @@ class LottoEngine:
                     }
         except: pass
 
-    # --- 필터링 로직 ---
+    # --- 번호 추천 조건 필터링 검증 함수 ---
     def check_filters(self, numbers):
+        # [체크 1] 연속된 숫자 제한 검증
+        # 3개 이상 연속으로 붙어 있는 숫자가 있으면 제외 (예: 1, 2, 3 또는 14, 15, 16)
         consecutive_cnt = 0
         for i in range(len(numbers) - 1):
             if numbers[i+1] - numbers[i] == 1:
                 consecutive_cnt += 1
-                if consecutive_cnt >= 3: return False
-            else: consecutive_cnt = 0
+                if consecutive_cnt >= 2: # 연속차가 2번 = 3개 숫자 연속
+                    return False
+            else:
+                consecutive_cnt = 0
 
-        if not (100 <= sum(numbers) <= 180): return False
+        # [체크 2] 6개 번호의 총합 범위 검증
+        # 번호 6개의 합계가 100 이상 ~ 180 이하인 조합만 합격
+        if not (100 <= sum(numbers) <= 180):
+            return False
 
+        # [체크 3] 번호 간 차이값(Diff) 다양성 검증
+        # 번호 쌍 간의 모든 차이값 집합의 수가 일정 기준 이상이어야 균형 잡힌 조합으로 인정
         diffs = set()
         for i in range(6):
             for j in range(i + 1, 6):
                 diffs.add(numbers[j] - numbers[i])
-        if (len(diffs) - 5) < 7: return False
+        if (len(diffs) - 5) < 7:
+            return False
 
         return True
 
@@ -82,11 +92,20 @@ class LottoEngine:
         attempts = 0
         while len(results) < count:
             attempts += 1
+            # 1~45 중 무작위 6개 난수 추출 후 오름차순 정렬
             candidate = sorted(random.sample(range(1, 46), 6))
-            if tuple(candidate) in self.history_set: continue
-            if not self.check_filters(candidate): continue
+
+            # [체크 A] 역대 1등 당첨 이력과 완전히 동일한 조합은 제외 (중복 제거)
+            if tuple(candidate) in self.history_set:
+                continue
+
+            # [체크 B] 필터 조건 통과 여부 검증 (연속숫자 / 총합범위 / 차이다양성)
+            if not self.check_filters(candidate):
+                continue
+
             results.append(candidate)
-            if attempts % 10000 == 0: print(f"{attempts}...", end='\r')
+            if attempts % 10000 == 0:
+                print(f"{attempts}...", end='\r')
 
         save_data = { "target_drw_no": target_drw_no, "picks": results }
         with open(MY_PICKS_FILE, 'w', encoding='utf-8') as f:
@@ -124,7 +143,7 @@ class LottoEngine:
                         winning_info = {"nums": set([int(x) for x in row[1:7]]), "bonus": int(row[7])}
                         break
 
-                # 만약 내 번호의 대상 회차가 최신화 후에도 없으면 마지막 추첨 회차로 안내 및 대조
+                # 지정 회차 결과가 아직 없으면 가장 최근 추첨 회차 결과로 대체 검증
                 if not winning_info and len(rows) > 1:
                     last_row = rows[-1]
                     target_round = int(last_row[0])
@@ -140,16 +159,26 @@ class LottoEngine:
         best_result = {"rank_val": 7, "rank_str": "낙첨", "matched": 0, "nums": []}
 
         for nums in my_numbers:
+            # [당첨 대조 1] 내 번호 6개와 당첨 번호 6개의 일치 개수 계산
             matched = len(winning_info['nums'].intersection(set(nums)))
+
+            # [당첨 대조 2] 보너스 번호 일치 여부 확인
             is_bonus = winning_info['bonus'] in nums
 
+            # [당첨 대조 3] 일치 개수 및 보너스 번호 기준 등수 판정
             rank_val, rank_str = 7, "낙첨"
-            if matched == 6: rank_val, rank_str = 1, "1등"
-            elif matched == 5 and is_bonus: rank_val, rank_str = 2, "2등"
-            elif matched == 5: rank_val, rank_str = 3, "3등"
-            elif matched == 4: rank_val, rank_str = 4, "4등"
-            elif matched == 3: rank_val, rank_str = 5, "5등"
+            if matched == 6:
+                rank_val, rank_str = 1, "1등"
+            elif matched == 5 and is_bonus:
+                rank_val, rank_str = 2, "2등"
+            elif matched == 5:
+                rank_val, rank_str = 3, "3등"
+            elif matched == 4:
+                rank_val, rank_str = 4, "4등"
+            elif matched == 3:
+                rank_val, rank_str = 5, "5등"
 
+            # 내가 구매한 게임들 중 가장 높은 등수 결과 기록
             if rank_val < best_result["rank_val"]:
                 best_result = {"rank_val": rank_val, "rank_str": rank_str, "matched": matched, "nums": nums}
             elif rank_val == best_result["rank_val"] and matched > best_result["matched"]:
