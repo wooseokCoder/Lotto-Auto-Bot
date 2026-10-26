@@ -6,6 +6,9 @@ import argparse
 import sys
 from datetime import datetime
 
+# 당첨 데이터 수집 모듈 연동
+from file1_history_manager import update_history
+
 # 구글 시트 라이브러리
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -28,6 +31,8 @@ class LottoEngine:
         self.load_history()
 
     def load_history(self):
+        self.history_set.clear()
+        self.latest_draw = None
         if not os.path.exists(HISTORY_FILE):
             return
         try:
@@ -65,10 +70,15 @@ class LottoEngine:
         return True
 
     def generate_numbers(self, count=15):
+        # 1. 번호 생성 전 먼저 당첨 이력 CSV 데이터를 최신화
+        print(">>> [1/2] 로또 당첨 이력 데이터 최신화 확인...")
+        update_history()
+        self.load_history()
+
         results = []
         target_drw_no = (self.latest_draw['drwNo'] + 1) if self.latest_draw else 1
 
-        print(f"[{target_drw_no}회차] 번호 생성 중...")
+        print(f"\n>>> [2/2] [{target_drw_no}회차] 번호 생성 중...")
         attempts = 0
         while len(results) < count:
             attempts += 1
@@ -88,8 +98,14 @@ class LottoEngine:
         self.upload_picks_to_sheet(target_drw_no, results)
 
     def check_my_rank(self):
+        # 1. 당첨 확인 전 먼저 당첨 이력 CSV 데이터를 최신화
+        print(">>> [1/2] 로또 당첨 이력 데이터 최신화 확인...")
+        update_history()
+        self.load_history()
+
+        print("\n>>> [2/2] 내 번호 당첨 결과 확인 중...")
         if not os.path.exists(MY_PICKS_FILE):
-            print("파일 없음.")
+            print("구매/생성된 번호 파일(my_picks.json)이 없습니다.")
             return
 
         with open(MY_PICKS_FILE, 'r', encoding='utf-8') as f:
@@ -108,12 +124,12 @@ class LottoEngine:
                         winning_info = {"nums": set([int(x) for x in row[1:7]]), "bonus": int(row[7])}
                         break
 
-                # 지정 회차 결과가 없으면 가장 최근 추첨 회차 결과로 대체
+                # 만약 내 번호의 대상 회차가 최신화 후에도 없으면 마지막 추첨 회차로 안내 및 대조
                 if not winning_info and len(rows) > 1:
                     last_row = rows[-1]
                     target_round = int(last_row[0])
                     winning_info = {"nums": set([int(x) for x in last_row[1:7]]), "bonus": int(last_row[7])}
-                    print(f"[안내] 지정된 회차 데이터가 없어 가장 최근 회차({target_round}회차) 결과로 진행합니다.")
+                    print(f"[안내] 지정된 회차 번호가 아직 추첨 전이어서, 최신 추첨 회차({target_round}회차) 결과로 진행합니다.")
 
         if not winning_info:
             print("당첨 번호 이력 데이터(lotto_history.csv)가 존재하지 않습니다.")
