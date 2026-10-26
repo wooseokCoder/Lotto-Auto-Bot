@@ -2,9 +2,9 @@ name: Lotto Auto Bot
 
 on:
   schedule:
-    # UTC 03:00 = 한국시간(KST) 12:00
-    # 일요일(0), 월요일(1) 매주 정기 실행
-    - cron: '0 3 * * 0,1'
+    # UTC 03:15 = 한국시간(KST) 12:15
+    # 정각(:00) 트래픽 몰림으로 인한 깃허브 실행 지연을 방지하기 위해 15분에 설정
+    - cron: '15 3 * * 0,1'
   workflow_dispatch:
     inputs:
       mode:
@@ -50,13 +50,13 @@ jobs:
         echo '${{ secrets.GOOGLE_JSON_KEY }}' > lotto_key.json
 
     - name: "일요일 - 토요일 당첨 결과 수집 및 당첨 확인"
-      if: (env.DAY_OF_WEEK == '7' && github.event.inputs.mode != 'gen') || github.event.inputs.mode == 'check'
+      if: github.event.inputs.mode == 'check' || ((github.event.inputs.mode == 'auto' || github.event_name == 'schedule') && env.DAY_OF_WEEK == '7')
       run: |
         python file1_history_manager.py
         python file2_lotto_service.py --mode check
 
     - name: "월요일 - 조건 맞춘 새로운 로또 번호 자동 생성"
-      if: (env.DAY_OF_WEEK == '1' && github.event.inputs.mode != 'check') || github.event.inputs.mode == 'gen' || (github.event.inputs.mode == 'auto' && env.DAY_OF_WEEK != '7')
+      if: github.event.inputs.mode == 'gen' || ((github.event.inputs.mode == 'auto' || github.event_name == 'schedule') && env.DAY_OF_WEEK != '7')
       run: |
         python file2_lotto_service.py --mode gen
 
