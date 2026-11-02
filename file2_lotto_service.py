@@ -130,8 +130,8 @@ class LottoEngine:
         with open(MY_PICKS_FILE, 'r', encoding='utf-8') as f:
             my_data = json.load(f)
 
-        target_round = my_data['target_drw_no']
-        my_numbers = my_data['picks']
+        target_round = my_data.get('target_drw_no')
+        my_numbers = my_data.get('picks', [])
 
         winning_info = None
         if os.path.exists(HISTORY_FILE):
@@ -143,15 +143,8 @@ class LottoEngine:
                         winning_info = {"nums": set([int(x) for x in row[1:7]]), "bonus": int(row[7])}
                         break
 
-                # 지정 회차 결과가 아직 없으면 가장 최근 추첨 회차 결과로 대체 검증
-                if not winning_info and len(rows) > 1:
-                    last_row = rows[-1]
-                    target_round = int(last_row[0])
-                    winning_info = {"nums": set([int(x) for x in last_row[1:7]]), "bonus": int(last_row[7])}
-                    print(f"[안내] 지정된 회차 번호가 아직 추첨 전이어서, 최신 추첨 회차({target_round}회차) 결과로 진행합니다.")
-
         if not winning_info:
-            print("당첨 번호 이력 데이터(lotto_history.csv)가 존재하지 않습니다.")
+            print(f"[알림] {target_round}회차 추첨 결과가 lotto_history.csv에 존재하지 않습니다.")
             return
 
         print(f"### {target_round}회차 당첨 확인 ###")
